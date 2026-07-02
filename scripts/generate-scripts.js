@@ -1,7 +1,6 @@
 // generate-scripts.js
 // Uses Claude (Anthropic API) to generate 7 Bons video scripts each week.
-// 5 scripts go to HeyGen for AI avatar videos.
-// 2 scripts go to Bonnie for on-camera filming.
+// All 7 scripts go to HeyGen for AI avatar videos.
 // Run directly: node scripts/generate-scripts.js
 
 require('dotenv').config();
@@ -12,15 +11,15 @@ const path = require('path');
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // 7 pillars for the week — rotate to keep content varied
-// First 5 = AI avatar videos, last 2 = Bonnie on-camera
+// All 7 = AI avatar videos
 const WEEKLY_PILLARS = [
   'Outfit Inspiration',
   'Fashion Tech',
   'Closet Organization',
   'Capsule Wardrobe',
   'Behind the Scenes',
-  'Outfit Inspiration',   // Script 6 — Bonnie films this
-  'Fashion Tech',          // Script 7 — Bonnie films this
+  'Outfit Inspiration',
+  'Fashion Tech',
 ];
 
 const BRAND_VOICE = `
@@ -31,10 +30,8 @@ The app is NOT launched yet — always direct viewers to join the waitlist at ge
 Never use the word "Dresst". The app is called Bons.
 `;
 
-async function generateScript(pillar, scriptNumber, isOnCamera) {
-  const cameraNote = isOnCamera
-    ? 'This will be filmed by Bonnie on her iPhone. Write in first person as Bonnie speaking directly to camera.'
-    : 'This will be narrated by an AI avatar. Write as a warm, confident voice-over.';
+async function generateScript(pillar, scriptNumber) {
+  const cameraNote = 'This will be narrated by an AI avatar. Write as a warm, confident voice-over.';
 
   const prompt = `${BRAND_VOICE}
 
@@ -79,15 +76,13 @@ async function main() {
 
   for (let i = 0; i < WEEKLY_PILLARS.length; i++) {
     const pillar = WEEKLY_PILLARS[i];
-    const isOnCamera = i >= 5; // Scripts 6 & 7 are Bonnie on-camera
-    const label = isOnCamera ? '🎬 Bonnie on-camera' : '🤖 AI avatar';
-    console.log(`\n  [${i + 1}/7] ${pillar} — ${label}`);
+    console.log(`\n  [${i + 1}/7] ${pillar} — 🤖 AI avatar`);
 
-    const script = await generateScript(pillar, i + 1, isOnCamera);
+    const script = await generateScript(pillar, i + 1);
     scripts.push({
       index: i + 1,
       pillar,
-      type: isOnCamera ? 'on-camera' : 'ai-avatar',
+      type: 'ai-avatar',
       script,
       generatedAt: new Date().toISOString(),
     });
@@ -108,7 +103,7 @@ async function main() {
   const txtPath = path.join(dir, `scripts-${week}.txt`);
   const readable = scripts.map(s => [
     `${'='.repeat(50)}`,
-    `Script ${s.index}: ${s.pillar} [${s.type === 'on-camera' ? 'BONNIE FILMS THIS' : 'AI AVATAR'}]`,
+    `Script ${s.index}: ${s.pillar} [AI AVATAR]`,
     `${'='.repeat(50)}`,
     s.script,
     '',

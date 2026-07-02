@@ -1,6 +1,5 @@
 // generate-videos.js
-// Submits the 5 AI-avatar scripts to HeyGen and waits for render completion.
-// Scripts 6 & 7 are filmed by Bonnie — those are handled separately (bonnie-footage/ folder).
+// Submits all 7 AI-avatar scripts to HeyGen and waits for render completion.
 // Run directly: node scripts/generate-videos.js
 
 require('dotenv').config();
@@ -94,7 +93,7 @@ async function main() {
   }
 
   const allScripts = JSON.parse(fs.readFileSync(scriptsPath, 'utf8'));
-  const aiScripts = allScripts.filter(s => s.type === 'ai-avatar'); // first 5
+  const aiScripts = allScripts.filter(s => s.type === 'ai-avatar'); // all 7
 
   console.log(`\n🎥 BONS VIDEO GENERATOR — ${week}`);
   console.log('━'.repeat(40));
@@ -104,7 +103,7 @@ async function main() {
 
   // Submit all videos first (parallel submission, sequential polling)
   for (const s of aiScripts) {
-    console.log(`  [${s.index}/5] Submitting "${s.pillar}"...`);
+    console.log(`  [${s.index}/${aiScripts.length}] Submitting "${s.pillar}"...`);
     try {
       const videoId = await submitVideo(s.script, `Bons-${week}-${s.index}-${s.pillar.replace(/\s+/g, '-')}`);
       console.log(`         ✅ Queued: ${videoId}`);
@@ -130,38 +129,17 @@ async function main() {
     }
   }
 
-  // Add Bonnie on-camera placeholders (to be filled manually)
-  const onCameraScripts = allScripts.filter(s => s.type === 'on-camera');
-  for (const s of onCameraScripts) {
-    const footagePath = path.join(__dirname, `../bonnie-footage/script-${s.index}.mp4`);
-    videos.push({
-      ...s,
-      videoId: null,
-      videoUrl: fs.existsSync(footagePath) ? footagePath : null,
-      status: fs.existsSync(footagePath) ? 'ready' : 'needs-filming',
-    });
-  }
-
   // Save results
   const logDir = path.join(__dirname, '../logs');
   if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
   const logPath = path.join(logDir, `videos-${week}.json`);
   fs.writeFileSync(logPath, JSON.stringify(videos, null, 2));
 
-  const completed = videos.filter(v => v.status === 'completed' || v.status === 'ready').length;
-  const needsFilming = videos.filter(v => v.status === 'needs-filming').length;
+  const completed = videos.filter(v => v.status === 'completed').length;
+  const failed = videos.filter(v => v.status === 'failed').length;
 
   console.log(`\n✅ Videos logged to logs/videos-${week}.json`);
-  console.log(`   ${completed} ready, ${needsFilming} still need Bonnie to film\n`);
-
-  if (needsFilming > 0) {
-    console.log('📱 Bonnie: Film scripts 6 & 7 using your iPhone.');
-    console.log('   Save the files as:');
-    onCameraScripts.forEach(s => {
-      console.log(`   bonnie-footage/script-${s.index}.mp4`);
-    });
-    console.log('   Then re-run this script or continue to schedule-posts.js\n');
-  }
+  console.log(`   ${completed} ready, ${failed} failed\n`);
 
   return videos;
 }
