@@ -1,165 +1,205 @@
+// schedule-posts.js
+// Schedules all 7 videos + 7 pins to TikTok, Instagram, and Pinterest via Publer.
+// Reads from logs/videos-WEEK.json and scripts/pin-descriptions-WEEK.json.
+// Run directly: node scripts/schedule-posts.js
+
 require('dotenv').config();
-const axios = require('axios');
-const fs = require('fs-extra');
-const { getBoardForPillar } = require('./pinterest-board-map');
-const { generatePinDescription } = require('./generate-pin-descriptions');
+const fs = require('fs');
+const path = require('path');
+const { getWeekString } = require('./generate-scripts');
+const { getBoardId } = require('./pinterest-board-map');
 
-const POSTING_TIMES = [
-  '07:00', // Day 1
-  '12:00', // Day 2
-  '18:00', // Day 3 — Bonnie on-camera
-  '12:00', // Day 4
-  '09:00', // Day 5
-  '11:00', // Day 6
-  '18:00'  // Day 7 — Bonnie on-camera
-];
+const PUBLER_API_KEY  = process.env.PUBLER_API_KEY;
+const PUBLER_BASE     = 'https://app.publer.com/api/v1';
 
-const PINTEREST_TIMES = [
-  '08:00', // Day 1
-  '20:00', // Day 2
-  '19:00', // Day 3
-  '13:00', // Day 4
-  '10:00', // Day 5
-  '14:00', // Day 6
-  '20:00'  // Day 7
-];
+// Optimal posting times per platform (24h format, local machine time)
+const POST_TIMES = {
+  tiktok:    ['18:00', '19:00', '20:00', '21:00', '12:00', '07:00', '22:00'],
+  instagram: ['06:00', '11:00', '14:00', '17:00', '19:00', '08:00', '20:00'],
+  // Pinterest posts 1hr after TikTok to avoid overlap (calculated dynamically below)
+};
 
-function getNextSevenDays() {
+async function publerPost(body) {
+  const res = await fetch(`${PUBLER_BASE}/posts?api_token=${PUBLER_API_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { raw: text, status: res.status };
+  }
+}
+
+async function getProfileIds() {
+  // Auto-discover Publer profile IDs by platform type
+  const res = await fetch(`${PUBLER_BASE}/workspaces?api_token=${PUBLER_API_KEY}`);
+  const workspaces = await res.json();
+
+  // Use env vars if set, otherwise fall back to auto-discovery
+  const ids = {
+    tiktok:    process.env.PUBLER_TIKTOK_ID    || null,
+    instagram: process.env.PUBLER_INSTAGRAM_ID  || null,
+    pinterest: process.env.PUBLER_PINTEREST_ID  || null,
+  };
+
+  if (ids.tiktok && ids.instagram && ids.pinterest) return ids;
+
+  // Try to fetch profiles from workspace
+  const workspaceId = workspaces[0]?.id;
+  if (workspaceId) {
+    console.log('  ⚠️  Profile IDs not in .env — run get-publer-ids.js to find them.');
+  }
+
+  return ids;
+}
+
+function getPostingDates() {
+  // Start posting Monday of the upcoming week (7 days, Mon-Sun)
+  const today = new Date();
+  const daysUntilMonday = (8 - today.getDay()) % 7 || 7;
+  const monday = new Date(today);
+  monday.setDate(today.getDate() + daysUntilMonday);
+
   const dates = [];
   for (let i = 0; i < 7; i++) {
-    const date = new Date();
-    date.setDate(date.getDate() + i + 1);
-    dates.push(date.toISOString().split('T')[0]);
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    dates.push(d.toISOString().split('T')[0]); // YYYY-MM-DD
   }
   return dates;
 }
 
-async function scheduleVideoPost({ videoUrl, caption, hashtags, scheduledTime }) {
-  console.log(`  📅 TikTok + Instagram → ${scheduledTime}`);
-  try {
-    const response = await axios.post(
-      'https://api.publer.io/v1/posts',
-      {
-        text: `${caption}\n\n${hashtags}`,
-        media: [{ url: videoUrl, type: 'video' }],
-        scheduled_at: scheduledTime,
-        profiles: [
-          process.env.PUBLER_INSTAGRAM_ID,
-          process.env.PUBLER_TIKTOK_ID
-        ]
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${process.env.PUBLER_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-    return response.data;
-  } catch (error) {
-    console.error(`  ❌ TikTok/Instagram error: ${error.response?.data?.message || error.message}`);
-    return null;
-  }
+function addHour(timeStr) {
+  const [h, m] = timeStr.split(':').map(Number);
+  return `${String((h + 1) % 24).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
-async function schedulePinterestPost({ videoUrl, pinDescription, pillar, scheduledTime }) {
-  const boardId = getBoardForPillar(pillar);
-  console.log(`  📌 Pinterest → ${scheduledTime}`);
-  try {
-    const response = await axios.post(
-      'https://api.publer.io/v1/posts',
-      {
-        text: pinDescription,
-        media: [{ url: videoUrl, type: 'video' }],
-        scheduled_at: scheduledTime,
-        profiles: [process.env.PUBLER_PINTEREST_ID],
-        pinterest: {
-          board_id: boardId,
-          title: `Bons — ${pillar.split('—')[0].trim()}`
-        }
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${process.env.PUBLER_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-    return response.data;
-  } catch (error) {
-    console.error(`  ❌ Pinterest error: ${error.response?.data?.message || error.message}`);
-    return null;
+function buildCaption(script, pillar, platform) {
+  const cta = platform === 'pinterest'
+    ? 'Join the Bons waitlist at getbons.com'
+    : 'Join our waitlist → getbons.com';
+
+  const body = script.length > 200 ? script.substring(0, 197) + '...' : script;
+
+  if (platform === 'instagram') {
+    return `${body}\n\n${cta}\n\n#style #fashion #wardrobe #ootd #styleapp #bonsapp`;
   }
+  if (platform === 'tiktok') {
+    return `${body} ${cta} #bons #styleapp #fashion #wardrobe`;
+  }
+  // Pinterest uses the full SEO description (passed separately)
+  return body;
 }
 
-async function schedulePosts() {
-  const today    = new Date().toISOString().split('T')[0];
-  const videoLog = `./logs/videos-${today}.json`;
+async function main() {
+  const week = getWeekString();
 
-  if (!await fs.pathExists(videoLog)) {
-    console.error('❌ No video log found. Run generate-videos.js first.');
+  const videosPath = path.join(__dirname, `../logs/videos-${week}.json`);
+  const pinsPath   = path.join(__dirname, `../scripts/pin-descriptions-${week}.json`);
+
+  if (!fs.existsSync(videosPath)) {
+    console.error(`❌ No videos for ${week}. Run generate-videos.js first.`);
     process.exit(1);
   }
 
-  const videos = await fs.readJson(videoLog);
-  const dates  = getNextSevenDays();
+  const videos = JSON.parse(fs.readFileSync(videosPath, 'utf8'));
+  const pins   = fs.existsSync(pinsPath)
+    ? JSON.parse(fs.readFileSync(pinsPath, 'utf8'))
+    : videos;
 
-  console.log('📅 Scheduling Bons posts — TikTok + Instagram + Pinterest\n');
+  console.log(`\n📅 BONS SCHEDULER — ${week}`);
+  console.log('━'.repeat(40));
 
-  let skipped = 0;
+  const profileIds = await getProfileIds();
+
+  if (!profileIds.tiktok || !profileIds.instagram || !profileIds.pinterest) {
+    console.error('\n❌ Missing Publer profile IDs. Run: node scripts/get-publer-ids.js');
+    console.error('   Then add the IDs to your .env file and re-run.\n');
+    process.exit(1);
+  }
+
+  const dates = getPostingDates();
+  console.log(`\nPosting Mon ${dates[0]} through Sun ${dates[6]}\n`);
+
+  const results = [];
 
   for (let i = 0; i < videos.length; i++) {
-    const video     = videos[i];
-    const videoDate = dates[i];
+    const video = videos[i];
+    const pin   = pins[i] || video;
+    const date  = dates[i];
 
     if (!video.videoUrl) {
-      console.log(`\n  ⏭️  ${video.day} skipped — video not ready yet`);
-      skipped++;
+      console.log(`  [${i + 1}/7] ⚠️  Skipping ${video.pillar} — no video URL yet`);
+      results.push({ index: i + 1, pillar: video.pillar, skipped: true, reason: 'no video URL' });
       continue;
     }
 
-    console.log(`\n━━━ ${video.day} (${video.type}) ━━━`);
+    console.log(`\n  [${i + 1}/7] ${date} — ${video.pillar}`);
 
-    // TikTok + Instagram
-    const videoTime = `${videoDate}T${POSTING_TIMES[i]}:00`;
-    await scheduleVideoPost({
-      videoUrl: video.videoUrl,
-      caption: video.caption,
-      hashtags: video.hashtags,
-      scheduledTime: videoTime
-    });
-    console.log(`  ✅ TikTok + Instagram scheduled`);
+    const tkTime  = `${date}T${POST_TIMES.tiktok[i]}:00`;
+    const igTime  = `${date}T${POST_TIMES.instagram[i]}:00`;
+    const pinTime = `${date}T${addHour(POST_TIMES.tiktok[i])}:00`;
 
-    // Pinterest
-    console.log(`  ✍️  Generating Pinterest pin description...`);
-    const pinDescription = await generatePinDescription({
-      pillar:  video.pillar  || 'Outfit Inspiration',
-      hook:    video.hook    || '',
-      caption: video.caption
-    });
+    const result = { index: i + 1, date, pillar: video.pillar };
 
-    const pinterestTime = `${videoDate}T${PINTEREST_TIMES[i]}:00`;
-    await schedulePinterestPost({
-      videoUrl: video.videoUrl,
-      pinDescription,
-      pillar: video.pillar || 'Outfit Inspiration',
-      scheduledTime: pinterestTime
-    });
-    console.log(`  ✅ Pinterest scheduled`);
+    // --- TikTok ---
+    const tkBody = {
+      profile_ids: [profileIds.tiktok],
+      text: buildCaption(video.script, video.pillar, 'tiktok'),
+      scheduled_at: tkTime,
+      media_urls: [video.videoUrl],
+    };
+    const tkRes = await publerPost(tkBody);
+    result.tiktok = tkRes?.post?.id ? `✅ ${tkRes.post.id}` : `⚠️  ${JSON.stringify(tkRes).substring(0, 80)}`;
+    console.log(`    TikTok ${POST_TIMES.tiktok[i]}: ${result.tiktok}`);
 
-    await new Promise(r => setTimeout(r, 1500));
+    // --- Instagram ---
+    const igBody = {
+      profile_ids: [profileIds.instagram],
+      text: buildCaption(video.script, video.pillar, 'instagram'),
+      scheduled_at: igTime,
+      media_urls: [video.videoUrl],
+    };
+    const igRes = await publerPost(igBody);
+    result.instagram = igRes?.post?.id ? `✅ ${igRes.post.id}` : `⚠️  ${JSON.stringify(igRes).substring(0, 80)}`;
+    console.log(`    Instagram ${POST_TIMES.instagram[i]}: ${result.instagram}`);
+
+    // --- Pinterest ---
+    const boardId = getBoardId(video.pillar);
+    const pinBody = {
+      profile_ids: [profileIds.pinterest],
+      text: pin.pinDescription || buildCaption(video.script, video.pillar, 'pinterest'),
+      scheduled_at: pinTime,
+      media_urls: [video.videoUrl],
+      pinterest_board_id: boardId,
+    };
+    const pinRes = await publerPost(pinBody);
+    result.pinterest = pinRes?.post?.id ? `✅ ${pinRes.post.id}` : `⚠️  ${JSON.stringify(pinRes).substring(0, 80)}`;
+    console.log(`    Pinterest ${addHour(POST_TIMES.tiktok[i])} → ${boardId}: ${result.pinterest}`);
+
+    results.push(result);
+
+    // Small delay between API calls
+    await new Promise(r => setTimeout(r, 500));
   }
 
-  console.log('\n\n🎉 All platforms scheduled for the week!');
-  console.log('  ✅ TikTok');
-  console.log('  ✅ Instagram');
-  console.log('  ✅ Pinterest');
+  // Save schedule log
+  const logDir = path.join(__dirname, '../logs');
+  const logPath = path.join(logDir, `schedule-${week}.json`);
+  fs.writeFileSync(logPath, JSON.stringify(results, null, 2));
 
-  if (skipped > 0) {
-    console.log(`\n⚠️  ${skipped} post(s) skipped — add missing video URLs and re-run.`);
-  }
+  const posted   = results.filter(r => !r.skipped).length;
+  const skipped  = results.filter(r => r.skipped).length;
 
-  console.log('\n📱 Check your Publer dashboard to confirm everything looks right.');
+  console.log(`\n${'━'.repeat(40)}`);
+  console.log(`✅ Done! ${posted * 3} posts scheduled across TikTok, Instagram & Pinterest.`);
+  if (skipped) console.log(`⚠️  ${skipped} videos skipped (missing URLs — check logs/videos-${week}.json)`);
+  console.log(`📋 Full log: logs/schedule-${week}.json`);
+  console.log('🔍 Verify in Publer dashboard → Scheduled Posts\n');
 }
 
-schedulePosts().catch(console.error);
+module.exports = { main };
+if (require.main === module) main().catch(console.error);

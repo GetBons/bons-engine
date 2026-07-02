@@ -2,7 +2,7 @@ require('dotenv').config();
 const express    = require('express');
 const bodyParser = require('body-parser');
 const { google } = require('googleapis');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const fs         = require('fs-extra');
 
 const app  = express();
@@ -54,13 +54,7 @@ async function markEmailSent(email) {
 }
 
 // ── Email ─────────────────────────────────────────────────────────────────
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.GMAIL_ADDRESS,
-    pass: process.env.GMAIL_APP_PASSWORD
-  }
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const WELCOME_SUBJECT = "You're in — welcome to Bons 🤍";
 
@@ -85,8 +79,8 @@ The Bons Team
 P.S. — Got a friend who's always saying "I have nothing to wear"? Forward this along. The earlier they join, the earlier they get in.`;
 
 async function sendWelcomeEmail(email) {
-  await transporter.sendMail({
-    from:    `"The Bons Team" <${process.env.GMAIL_ADDRESS}>`,
+  await resend.emails.send({
+    from:    'The Bons Team <hello@getbons.com>',
     to:      email,
     subject: WELCOME_SUBJECT,
     text:    WELCOME_BODY
