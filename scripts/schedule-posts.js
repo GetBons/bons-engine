@@ -1,6 +1,7 @@
 // schedule-posts.js
-// Schedules all 7 videos + 7 pins to TikTok, Instagram, and Pinterest via Publer.
-// Reads from logs/videos-WEEK.json and scripts/pin-descriptions-WEEK.json.
+// Schedules all 7 videos to TikTok + Instagram, and 7 image pins to Pinterest via Publer.
+// Videos:  logs/videos-WEEK.json   → TikTok, Instagram Reels
+// Images:  logs/images-WEEK.json   → Pinterest (portrait images, pillar-matched boards)
 // Run directly: node scripts/schedule-posts.js
 
 require('dotenv').config();
@@ -98,7 +99,7 @@ async function main() {
   const week = getWeekString();
 
   const videosPath = path.join(__dirname, `../logs/videos-${week}.json`);
-  const pinsPath   = path.join(__dirname, `../scripts/pin-descriptions-${week}.json`);
+  const imagesPath = path.join(__dirname, `../logs/images-${week}.json`);
 
   if (!fs.existsSync(videosPath)) {
     console.error(`❌ No videos for ${week}. Run generate-videos.js first.`);
@@ -106,9 +107,17 @@ async function main() {
   }
 
   const videos = JSON.parse(fs.readFileSync(videosPath, 'utf8'));
-  const pins   = fs.existsSync(pinsPath)
-    ? JSON.parse(fs.readFileSync(pinsPath, 'utf8'))
-    : videos;
+
+  // Pinterest images — generated separately by generate-images.js
+  const images = fs.existsSync(imagesPath)
+    ? JSON.parse(fs.readFileSync(imagesPath, 'utf8'))
+    : [];
+
+  if (images.length === 0) {
+    console.warn('⚠️  No Pinterest images found (logs/images-WEEK.json missing).');
+    console.warn('   Run generate-images.js first for best results.');
+    console.warn('   Falling back to video URLs for Pinterest.\n');
+  }
 
   console.log(`\n📅 BONS SCHEDULER — ${week}`);
   console.log('━'.repeat(40));
@@ -128,7 +137,7 @@ async function main() {
 
   for (let i = 0; i < videos.length; i++) {
     const video = videos[i];
-    const pin   = pins[i] || video;
+    const image = images[i] || null;
     const date  = dates[i];
 
     if (!video.videoUrl) {
@@ -167,18 +176,21 @@ async function main() {
     result.instagram = igRes?.post?.id ? `✅ ${igRes.post.id}` : `⚠️  ${JSON.stringify(igRes).substring(0, 80)}`;
     console.log(`    Instagram ${POST_TIMES.instagram[i]}: ${result.instagram}`);
 
-    // --- Pinterest ---
+    // --- Pinterest (image pin) ---
     const boardId = getBoardId(video.pillar);
+    // Prefer AI-generated image; fall back to video if image not available
+    const pinMediaUrl = image?.imageUrl || video.videoUrl;
+    const pinMediaType = image?.imageUrl ? 'image' : 'video (fallback — run generate-images.js)';
     const pinBody = {
       profile_ids: [profileIds.pinterest],
-      text: pin.pinDescription || buildCaption(video.script, video.pillar, 'pinterest'),
+      text: buildCaption(video.script, video.pillar, 'pinterest'),
       scheduled_at: pinTime,
-      media_urls: [video.videoUrl],
+      media_urls: [pinMediaUrl],
       pinterest_board_id: boardId,
     };
     const pinRes = await publerPost(pinBody);
     result.pinterest = pinRes?.post?.id ? `✅ ${pinRes.post.id}` : `⚠️  ${JSON.stringify(pinRes).substring(0, 80)}`;
-    console.log(`    Pinterest ${addHour(POST_TIMES.tiktok[i])} → ${boardId}: ${result.pinterest}`);
+    console.log(`    Pinterest ${addHour(POST_TIMES.tiktok[i])} → ${boardId} [${pinMediaType}]: ${result.pinterest}`);
 
     results.push(result);
 
@@ -195,7 +207,8 @@ async function main() {
   const skipped  = results.filter(r => r.skipped).length;
 
   console.log(`\n${'━'.repeat(40)}`);
-  console.log(`✅ Done! ${posted * 3} posts scheduled across TikTok, Instagram & Pinterest.`);
+  const pinImages = results.filter(r => !r.skipped && images.length > 0).length;
+  console.log(`✅ Done! ${posted * 2} videos (TikTok + Instagram) + ${pinImages} image pins (Pinterest) scheduled.`);
   if (skipped) console.log(`⚠️  ${skipped} videos skipped (missing URLs — check logs/videos-${week}.json)`);
   console.log(`📋 Full log: logs/schedule-${week}.json`);
   console.log('🔍 Verify in Publer dashboard → Scheduled Posts\n');
