@@ -1,94 +1,64 @@
 // generate-images.js
-// Generates Pinterest-native portrait images for each content pillar using Ideogram.
-// One image per pillar, 2:3 ratio, fashion/lifestyle aesthetic.
+// Fetches Pinterest-native portrait images for each content pillar using Pexels (free).
+// Searches for high-quality fashion/lifestyle stock photos matching each pillar.
 // Run: node scripts/generate-images.js
 
 require('dotenv').config();
-const Anthropic = require('@anthropic-ai/sdk');
 const fs = require('fs');
 const path = require('path');
 const { getWeekString } = require('./generate-scripts');
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const IDEOGRAM_API_KEY = process.env.IDEOGRAM_API_KEY;
+const PEXELS_API_KEY = process.env.PEXELS_API_KEY;
+const PEXELS_BASE = 'https://api.pexels.com/v1';
 
-const BRAND_CONTEXT = `
-Bons is an AI-powered personal styling and wardrobe app.
-Visual aesthetic: warm, aspirational, minimal. Think clean closets, styled flat lays, soft natural lighting.
-Color palette: neutrals, warm whites, soft earth tones, sage green, dusty pink. No bright neons.
-Images should feel like they belong on a stylish woman's Pinterest board — aspirational but attainable.
-Photography style: editorial fashion, lifestyle, interior design.
-`;
-
-// Per-pillar visual direction to keep images on-brand
-const PILLAR_STYLE = {
-  'Outfit Inspiration':  'a styled outfit flat lay on a light wood or white surface, multiple clothing pieces arranged artfully, accessories, soft shadows',
-  'Fashion Tech':        'a sleek smartphone on a styled desk with fashion accessories nearby, app interface visible, minimal tech meets style aesthetic',
-  'Closet Organization': 'a beautifully organized walk-in closet or wardrobe, clothes color-coded and neatly hung, minimalist clean lines, warm lighting',
-  'Capsule Wardrobe':    'a capsule wardrobe flat lay, 8-10 neutral clothing pieces arranged on a white linen surface, minimal and intentional',
-  'Behind the Scenes':   'a stylish creative workspace with a laptop, mood board, fabric swatches, warm ambient light, female entrepreneur aesthetic',
+// Search terms per content pillar — ordered by relevance, tries each until a good photo is found
+const PILLAR_SEARCHES = {
+  'Outfit Inspiration':  ['outfit flat lay fashion', 'fashion flat lay clothing', 'styled outfit clothes'],
+  'Fashion Tech':        ['woman smartphone fashion', 'fashion app style phone', 'woman using phone fashion'],
+  'Closet Organization': ['organized closet wardrobe', 'minimalist closet clothes', 'walk in closet organized'],
+  'Capsule Wardrobe':    ['capsule wardrobe minimal', 'minimal fashion clothes neutral', 'neutral wardrobe flat lay'],
+  'Behind the Scenes':   ['woman entrepreneur desk', 'creative workspace fashion', 'female founder laptop workspace'],
 };
 
-async function generateImagePrompt(pillar, script) {
-  const styleHint = PILLAR_STYLE[pillar] || 'fashion lifestyle photography flat lay';
+async function fetchPexelsPhoto(pillar) {
+  const queries = PILLAR_SEARCHES[pillar] || ['fashion lifestyle'];
 
-  const response = await client.messages.create({
-    model: 'claude-opus-4-8',
-    max_tokens: 250,
-    messages: [{
-      role: 'user',
-      content: `${BRAND_CONTEXT}
+  for (const query of queries) {
+    const url = `${PEXELS_BASE}/search?query=${encodeURIComponent(query)}&orientation=portrait&per_page=5&size=large`;
+    const res = await fetch(url, {
+      headers: { Authorization: PEXELS_API_KEY },
+    });
 
-Content pillar: "${pillar}"
-Script excerpt: "${script.slice(0, 200)}"
-Visual direction: ${styleHint}
+    if (!res.ok) {
+      throw new Error(`Pexels API error ${res.status}: ${await res.text()}`);
+    }
 
-Write a single Ideogram image generation prompt for a Pinterest pin.
-Rules:
-- No people, no faces (avoids stock photo restrictions and keeps brand consistent)
-- No text or words in the image
-- Portrait orientation (2:3)
-- Warm, aspirational, editorial aesthetic
-- Specific about props, colors, textures, lighting
-- 40-80 words max
+    const data = await res.json();
+    const photos = data.photos || [];
 
-Return ONLY the prompt. No labels, no explanation.`,
-    }],
-  });
+    if (photos.length > 0) {
+      // Pick a different photo each week based on week number to avoid repeating
+      const week = getWeekString();
+      const weekNum = parseInt(week.split('-w')[1]) || 1;
+      const photo = photos[weekNum % photos.length];
 
-  return response.content[0].text.trim();
-}
-
-async function generateImage(prompt) {
-  const res = await fetch('https://api.ideogram.ai/generate', {
-    method: 'POST',
-    headers: {
-      'Api-Key': IDEOGRAM_API_KEY,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      image_request: {
-        prompt,
-        aspect_ratio: 'ASPECT_2_3',  // Portrait — ideal for Pinterest
-        model: 'V_2',
-        style_type: 'REALISTIC',
-        negative_prompt: 'people, faces, text, words, logos, watermarks, blurry, dark, harsh lighting',
-      },
-    }),
-  });
-
-  const data = await res.json();
-  if (!data.data?.[0]?.url) {
-    throw new Error(`Ideogram error: ${JSON.stringify(data)}`);
+      return {
+        url: photo.src.portrait,       // 800×1200px — ideal for Pinterest
+        fullUrl: photo.src.large2x,    // higher res backup
+        photographer: photo.photographer,
+        pexelsUrl: photo.url,
+        query,
+      };
+    }
   }
-  return data.data[0].url;
+
+  throw new Error(`No photos found for pillar: ${pillar}`);
 }
 
 async function main() {
-  if (!IDEOGRAM_API_KEY || IDEOGRAM_API_KEY === 'your_ideogram_api_key_here') {
-    console.error('❌ IDEOGRAM_API_KEY not set in .env');
-    console.error('   Sign up free at ideogram.ai → Settings → API Keys');
-    console.error('   Free tier: 10 images/day — more than enough for 7/week\n');
+  if (!PEXELS_API_KEY || PEXELS_API_KEY === 'your_pexels_api_key_here') {
+    console.error('❌ PEXELS_API_KEY not set in .env');
+    console.error('   Sign up free at pexels.com/api — takes 2 minutes, no credit card.\n');
     process.exit(1);
   }
 
@@ -104,24 +74,24 @@ async function main() {
 
   console.log(`\n🖼️  BONS IMAGE GENERATOR — ${week}`);
   console.log('━'.repeat(40));
-  console.log(`Generating ${scripts.length} Pinterest images via Ideogram...\n`);
+  console.log(`Fetching ${scripts.length} Pinterest images from Pexels...\n`);
 
   const images = [];
 
   for (const s of scripts) {
     console.log(`  [${s.index}/7] ${s.pillar}...`);
     try {
-      const prompt = await generateImagePrompt(s.pillar, s.script);
-      console.log(`         Prompt: ${prompt.slice(0, 80)}...`);
-
-      const imageUrl = await generateImage(prompt);
-      console.log(`         ✅ Done`);
+      const photo = await fetchPexelsPhoto(s.pillar);
+      console.log(`         ✅ Found (search: "${photo.query}", photo by ${photo.photographer})`);
 
       images.push({
         index: s.index,
         pillar: s.pillar,
-        imagePrompt: prompt,
-        imageUrl,
+        imageUrl: photo.url,
+        imageUrlHiRes: photo.fullUrl,
+        photographer: photo.photographer,
+        pexelsUrl: photo.pexelsUrl,
+        searchQuery: photo.query,
         generatedAt: new Date().toISOString(),
       });
     } catch (e) {
@@ -129,8 +99,8 @@ async function main() {
       images.push({ index: s.index, pillar: s.pillar, imageUrl: null, error: e.message });
     }
 
-    // Pause between calls to respect rate limits
-    if (s.index < scripts.length) await new Promise(r => setTimeout(r, 1500));
+    // Small pause between requests
+    if (s.index < scripts.length) await new Promise(r => setTimeout(r, 300));
   }
 
   // Save to logs/
@@ -143,7 +113,7 @@ async function main() {
   const fail = images.filter(i => !i.imageUrl).length;
 
   console.log(`\n✅ Images saved to logs/images-${week}.json`);
-  console.log(`   ${ok} generated, ${fail} failed\n`);
+  console.log(`   ${ok} found, ${fail} failed\n`);
 
   return images;
 }
