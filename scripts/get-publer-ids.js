@@ -18,8 +18,14 @@ async function main() {
 
   console.log('\n🔍 Fetching your Publer connected accounts...\n');
 
+  // Try both auth styles — Publer has used both query param and Bearer header
+  const authHeaders = {
+    'Authorization': `Bearer ${PUBLER_API_KEY}`,
+    'Content-Type': 'application/json',
+  };
+
   // Get workspaces
-  const wsRes  = await fetch(`${PUBLER_BASE}/workspaces?api_token=${PUBLER_API_KEY}`);
+  const wsRes  = await fetch(`${PUBLER_BASE}/workspaces`, { headers: authHeaders });
   const wsData = await wsRes.json();
 
   if (!wsData?.[0]) {
@@ -42,7 +48,7 @@ async function main() {
 
   let profiles = null;
   for (const url of endpoints) {
-    const res  = await fetch(`${url}?api_token=${PUBLER_API_KEY}`);
+    const res  = await fetch(url, { headers: authHeaders });
     const data = await res.json();
     if (Array.isArray(data) && data.length > 0) {
       profiles = data;
