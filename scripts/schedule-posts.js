@@ -25,6 +25,8 @@ const ACCOUNT_IDS = {
   instagram: process.env.PUBLER_INSTAGRAM_ID,
   pinterest: process.env.PUBLER_PINTEREST_ID,
   linkedin:  process.env.PUBLER_LINKEDIN_ID,
+  youtube:   process.env.PUBLER_YOUTUBE_ID,
+  twitter:   process.env.PUBLER_TWITTER_ID,
 };
 
 // Optimal posting times (24h, local time)
@@ -32,6 +34,8 @@ const POST_TIMES = {
   tiktok:    ['18:00', '19:00', '20:00', '21:00', '12:00', '07:00', '22:00'],
   instagram: ['06:00', '11:00', '14:00', '17:00', '19:00', '08:00', '20:00'],
   linkedin:  ['08:00', '12:00', '08:00', '12:00', '08:00', '10:00', '12:00'],
+  youtube:   ['09:00', '15:00', '09:00', '15:00', '09:00', '11:00', '15:00'],
+  twitter:   ['08:00', '12:00', '17:00', '08:00', '12:00', '09:00', '17:00'],
 };
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -150,6 +154,8 @@ function buildCaption(script, platform) {
     : 'Join our waitlist → getbons.com';
   if (platform === 'instagram') return `${body}\n\n${cta}\n\n#style #fashion #wardrobe #ootd #styleapp #bonsapp`;
   if (platform === 'tiktok')    return `${body} ${cta} #bons #styleapp #fashion #wardrobe`;
+  if (platform === 'youtube')   return `${body}\n\n${cta}\n\n#Shorts #fashion #wardrobe #styleapp #bons #ootd`;
+  if (platform === 'twitter')   return `${body.substring(0, 220)} ${cta} #bons #fashion #wardrobe`;
   return `${body}\n\n${cta}`;
 }
 
@@ -249,6 +255,41 @@ async function main() {
       } catch (e) {
         result.instagram = `❌ ${e.message.substring(0, 80)}`;
         console.log(`    Instagram: ❌ ${e.message.substring(0, 80)}`);
+      }
+    }
+
+    // ── YouTube Short ────────────────────────────────────────────────
+    if (videoMediaId && ACCOUNT_IDS.youtube) {
+      const ytTime = `${date}T${POST_TIMES.youtube[i]}:00`;
+      const ytTitle = video.script.split('.')[0].substring(0, 100); // first sentence as title
+      try {
+        await schedulePost(
+          { youtube: { type: 'video', title: ytTitle, text: buildCaption(video.script, 'youtube'), media: [{ id: videoMediaId, type: 'video' }], made_for_kids: false } },
+          [{ id: ACCOUNT_IDS.youtube, scheduled_at: ytTime }],
+          `YouTube ${date}`
+        );
+        result.youtube = `✅ ${POST_TIMES.youtube[i]}`;
+        console.log(`    YouTube   ${POST_TIMES.youtube[i]}: ✅`);
+      } catch (e) {
+        result.youtube = `❌ ${e.message.substring(0, 80)}`;
+        console.log(`    YouTube: ❌ ${e.message.substring(0, 80)}`);
+      }
+    }
+
+    // ── X / Twitter ──────────────────────────────────────────────────
+    if (videoMediaId && ACCOUNT_IDS.twitter) {
+      const xTime = `${date}T${POST_TIMES.twitter[i]}:00`;
+      try {
+        await schedulePost(
+          { twitter: { type: 'status', text: buildCaption(video.script, 'twitter'), media: [{ id: videoMediaId, type: 'video' }] } },
+          [{ id: ACCOUNT_IDS.twitter, scheduled_at: xTime }],
+          `X ${date}`
+        );
+        result.twitter = `✅ ${POST_TIMES.twitter[i]}`;
+        console.log(`    X         ${POST_TIMES.twitter[i]}: ✅`);
+      } catch (e) {
+        result.twitter = `❌ ${e.message.substring(0, 80)}`;
+        console.log(`    X: ❌ ${e.message.substring(0, 80)}`);
       }
     }
 
