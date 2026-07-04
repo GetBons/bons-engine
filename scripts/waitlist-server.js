@@ -4,6 +4,7 @@ const bodyParser = require('body-parser');
 const { google } = require('googleapis');
 const { Resend } = require('resend');
 const fs         = require('fs-extra');
+const juice      = require('juice'); // inlines CSS so email clients render it correctly
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -218,7 +219,7 @@ async function sendWelcomeEmail(email) {
     from:    'Bons <hello@getbons.com>',
     to:      email,
     subject: WELCOME_SUBJECT,
-    html:    WELCOME_HTML,
+    html:    juice(WELCOME_HTML),  // inline all CSS for Gmail/Outlook compatibility
     text:    WELCOME_TEXT,
   });
   console.log(`  📧 Welcome email sent to ${email}`);
