@@ -68,7 +68,13 @@ async function uploadMedia(url, name) {
   return media.id;
 }
 
-function getPostingDates() {
+function getPostingDates(week) {
+  const logPath = path.join(__dirname, `../logs/schedule-${week}.json`);
+  if (week && fs.existsSync(logPath)) {
+    const log = JSON.parse(fs.readFileSync(logPath, 'utf8'));
+    const dates = log.map(r => r.date).filter(Boolean);
+    if (dates.length === 7) return dates;
+  }
   const today = new Date();
   const daysUntilMonday = (8 - today.getDay()) % 7 || 7;
   const monday = new Date(today);
@@ -105,7 +111,7 @@ async function main() {
 
   const videos = JSON.parse(fs.readFileSync(videosPath, 'utf8'));
   const images = fs.existsSync(imagesPath) ? JSON.parse(fs.readFileSync(imagesPath, 'utf8')) : [];
-  const dates  = getPostingDates();
+  const dates  = getPostingDates(week);
 
   if (images.length === 0) {
     console.warn('⚠️  No Pinterest images found. Run generate-images.js first.\n');

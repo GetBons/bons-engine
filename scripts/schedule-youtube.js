@@ -1,6 +1,7 @@
-// schedule-instagram.js
-// Re-schedules Instagram posts only — use when Instagram was skipped or failed.
-// Run: node scripts/schedule-instagram.js
+// schedule-youtube.js
+// Schedules YouTube Shorts only — use when YouTube was skipped in schedule-posts.js.
+// Run: node scripts/schedule-youtube.js [week]
+// Example: node scripts/schedule-youtube.js 2026-w27
 
 require('dotenv').config();
 const fs   = require('fs');
@@ -9,7 +10,7 @@ const { getWeekString } = require('./generate-scripts');
 
 const PUBLER_API_KEY  = process.env.PUBLER_API_KEY;
 const WORKSPACE_ID    = process.env.PUBLER_WORKSPACE_ID;
-const INSTAGRAM_ID    = process.env.PUBLER_INSTAGRAM_ID;
+const YOUTUBE_ID      = process.env.PUBLER_YOUTUBE_ID;
 const PUBLER_BASE     = 'https://app.publer.com/api/v1';
 
 const HEADERS = {
@@ -18,7 +19,7 @@ const HEADERS = {
   'Publer-Workspace-Id': WORKSPACE_ID,
 };
 
-const POST_TIMES = ['06:00', '11:00', '14:00', '17:00', '19:00', '08:00', '20:00'];
+const POST_TIMES = ['09:00', '15:00', '09:00', '15:00', '09:00', '11:00', '15:00'];
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -67,12 +68,14 @@ async function uploadMedia(url, name) {
 }
 
 function getPostingDates(week) {
+  // If a schedule log exists for this week, use those exact dates (ensures alignment with other platforms)
   const logPath = path.join(__dirname, `../logs/schedule-${week}.json`);
-  if (week && fs.existsSync(logPath)) {
+  if (fs.existsSync(logPath)) {
     const log = JSON.parse(fs.readFileSync(logPath, 'utf8'));
     const dates = log.map(r => r.date).filter(Boolean);
     if (dates.length === 7) return dates;
   }
+  // Fallback: next Monday from today (same logic as schedule-posts.js)
   const today = new Date();
   const daysUntilMonday = (8 - today.getDay()) % 7 || 7;
   const monday = new Date(today);
@@ -85,13 +88,13 @@ function getPostingDates(week) {
 }
 
 function buildCaption(script) {
-  const body = script.length > 200 ? script.substring(0, 197) + '...' : script;
-  return `${body}\n\nJoin our waitlist → getbons.com\n\n#style #fashion #wardrobe #ootd #styleapp #bonsapp`;
+  const body = script.length > 220 ? script.substring(0, 217) + '...' : script;
+  return `${body}\n\nJoin our waitlist → getbons.com\n\n#Shorts #fashion #wardrobe #styleapp #bons #ootd`;
 }
 
 async function main() {
-  if (!INSTAGRAM_ID)  { console.error('❌ PUBLER_INSTAGRAM_ID not set');  process.exit(1); }
-  if (!WORKSPACE_ID)  { console.error('❌ PUBLER_WORKSPACE_ID not set');  process.exit(1); }
+  if (!YOUTUBE_ID)   { console.error('❌ PUBLER_YOUTUBE_ID not set');   process.exit(1); }
+  if (!WORKSPACE_ID) { console.error('❌ PUBLER_WORKSPACE_ID not set'); process.exit(1); }
 
   const week       = process.argv[2] || getWeekString();
   const videosPath = path.join(__dirname, `../logs/videos-${week}.json`);
@@ -104,7 +107,7 @@ async function main() {
   const videos = JSON.parse(fs.readFileSync(videosPath, 'utf8'));
   const dates  = getPostingDates(week);
 
-  console.log(`\n📸 INSTAGRAM SCHEDULER — ${week}`);
+  console.log(`\n▶️  YOUTUBE SCHEDULER — ${week}${process.argv[2] ? ' (manual)' : ''}`);
   console.log('━'.repeat(40));
   console.log(`Posting Mon ${dates[0]} through Sun ${dates[6]}\n`);
 
@@ -112,6 +115,7 @@ async function main() {
     const video = videos[i];
     const date  = dates[i];
     const time  = POST_TIMES[i];
+    const title = video.script.split('.')[0].substring(0, 100);
 
     console.log(`  [${i + 1}/7] ${date} ${time} — ${video.pillar}`);
 
@@ -121,7 +125,7 @@ async function main() {
     }
 
     try {
-      const mediaId = await uploadMedia(video.videoUrl, `bons-video-${week}-ig-${i + 1}.mp4`);
+      const mediaId = await uploadMedia(video.videoUrl, `bons-video-${week}-yt-${i + 1}.mp4`);
       console.log(`    Media ID: ${mediaId}`);
 
       const { data } = await pub('/posts/schedule', 'POST', {
@@ -129,13 +133,15 @@ async function main() {
           state: 'scheduled',
           posts: [{
             networks: {
-              instagram: {
-                type:  'video',   // Reels via Publer use type:'video'
-                text:  buildCaption(video.script),
-                media: [{ id: mediaId, type: 'video' }],
+              youtube: {
+                type:          'video',
+                title,
+                text:          buildCaption(video.script),
+                media:         [{ id: mediaId, type: 'video' }],
+                made_for_kids: false,
               },
             },
-            accounts: [{ id: INSTAGRAM_ID, scheduled_at: `${date}T${time}:00` }],
+            accounts: [{ id: YOUTUBE_ID, scheduled_at: `${date}T${time}:00` }],
           }],
         },
       });
@@ -150,7 +156,7 @@ async function main() {
     await sleep(500);
   }
 
-  console.log('✅ Done! Check Publer → Scheduled Posts to verify Instagram reels.\n');
+  console.log('✅ Done! Check Publer → Scheduled Posts to verify YouTube Shorts.\n');
 }
 
 main().catch(console.error);
